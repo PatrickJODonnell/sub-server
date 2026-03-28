@@ -1,5 +1,6 @@
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from nba_api.stats.static import players
@@ -34,7 +35,7 @@ def get_player_info(player_id: int) -> dict:
 
         return {
             "player_id": int(row["PERSON_ID"]),
-            "full_name": _val(row, "DISPLAY_FIRST_LAST"),
+            "full_name": _val(row, "DISPLAY_FIRST_LAST") or "Unknown",
             "birthdate": str(row["BIRTHDATE"])[:10] if _val(row, "BIRTHDATE") else None,
             "height": _val(row, "HEIGHT"),
             "weight": str(_val(row, "WEIGHT")) if _val(row, "WEIGHT") else None,
@@ -77,8 +78,8 @@ def get_next_game(team_id: int) -> dict:
         if team_games.empty:
             raise HTTPException(status_code=404, detail="No games found for team")
 
-        # NBA schedule dates are in ET; use ET date (UTC-5) to match gameDateEst
-        today = (datetime.now(timezone.utc) - timedelta(hours=5)).date()
+        # NBA schedule dates are in ET; use proper ET timezone for DST handling
+        today = datetime.now(ZoneInfo("America/New_York")).date()
 
         def parse_date(val):
             try:
@@ -112,8 +113,8 @@ def get_next_game(team_id: int) -> dict:
         if time_match and not is_live:
             try:
                 t = datetime.strptime(f"{game_date} {time_match.group(1)} {time_match.group(2)}", "%Y-%m-%d %I:%M %p")
-                # ET is UTC-5 (EST) or UTC-4 (EDT); approximate with UTC-5
-                start_time_utc = (t + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                t_et = t.replace(tzinfo=ZoneInfo("America/New_York"))
+                start_time_utc = t_et.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             except Exception:
                 pass
 
@@ -131,7 +132,7 @@ def get_next_game(team_id: int) -> dict:
 
 def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
     try:
-        pbp = LivePlayByPlay(game_id=game_id)
+        pbp = LivePlayByPlay(game_id=game_id, timeout=10)
         actions = pbp.get_dict()["game"]["actions"]
 
         all_event_nums = [int(a["actionNumber"]) for a in actions if "actionNumber" in a]
@@ -146,7 +147,13 @@ def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
                 [a for a in subs if a.get("personId") == player_id],
                 key=lambda x: x["actionNumber"],
             )
-            is_on_court = bool(all_player_subs and all_player_subs[-1].get("subType") == "in")
+            if all_player_subs:
+                is_on_court = all_player_subs[-1].get("subType") == "in"
+            else:
+                # No subs — player may be a starter who hasn't been subbed out yet.
+                # Check if they have any game actions (shots, fouls, etc.)
+                player_actions = [a for a in actions if a.get("personId") == player_id]
+                is_on_court = len(player_actions) > 0
             if is_on_court:
                 return {"player_checked_in": True, "last_event_num": max_event_num}
 
