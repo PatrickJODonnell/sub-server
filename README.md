@@ -63,7 +63,13 @@ nba_client.py   — All business logic; wraps nba_api calls, returns plain dicts
 models.py       — Pydantic v2 response schemas, no logic
 ```
 
-All `nba_api` calls use a 10-second timeout. stats.nba.com is unreliable, so every call is wrapped in try/except and returns a `503` on failure.
+All `nba_api` calls use a **15-second** timeout, with up to **3 retries** and exponential backoff on transient failures. stats.nba.com is unreliable, so every call is wrapped in try/except and returns a `503` on failure.
+
+### Stats API HTTP sessions
+
+Endpoints that use `nba_api.stats.endpoints` (`/players/{player_id}`, `/teams/{team_id}/next-game`) talk to **stats.nba.com** through `nba_api`'s shared `requests.Session`. In a long-lived process (typical for cloud hosting), reusing that session for consecutive stats calls can cause the next request to hang or time out — see [nba_api issue #633](https://github.com/swar/nba_api/issues/633).
+
+`nba_client.py` mitigates this by **closing and dropping** that cached session in a `finally` block after each **stats** workflow finishes (player detail and league schedule). The shared retry helper also clears the session **before backoff** on `Timeout` or `ConnectionError`, including for live play-by-play, since `nba_api` reuses the same underlying session cache across HTTP clients.
 
 ## Testing
 

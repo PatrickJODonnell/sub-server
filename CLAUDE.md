@@ -41,6 +41,7 @@ Interactive API docs: `http://localhost:8000/docs`
 - `get_next_game` — cached 2 min by team_id (TTLCache)
 - `get_checkins` — never cached (real-time data)
 - All nba_api calls retry up to 3 times with exponential backoff on transient errors
+- After each `stats` endpoint flow (and before retry on `Timeout` / `ConnectionError`), the shared `nba_api` `requests.Session` is closed and cleared — mitigates multi-request hangs to stats.nba.com in long-lived workers ([nba_api#633](https://github.com/swar/nba_api/issues/633))
 - `clear_caches()` helper available for test isolation
 
 ## nba_api Usage Notes

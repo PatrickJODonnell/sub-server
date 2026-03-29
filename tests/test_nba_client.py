@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
+import requests
 from fastapi import HTTPException
 
 import nba_client
@@ -529,3 +530,58 @@ def test_get_checkins_retry_success(mock_pbp_cls):
     result = nba_client.get_checkins("0022500001", MCCAIN_ID, last_event_num=0)
     assert result["player_checked_in"] is True
     assert mock_pbp_cls.call_count == 2
+
+
+# ── stats HTTP session reset (nba_api #633) ─────────────────────────
+
+
+@patch("nba_client._reset_nba_stats_http_session")
+@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
+def test_get_player_info_resets_stats_session_after_success(mock_cls, mock_reset):
+    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames()
+    nba_client.get_player_info(MCCAIN_ID)
+    assert mock_reset.call_count == 1
+
+
+@patch("nba_client._reset_nba_stats_http_session")
+@patch("nba_client.datetime")
+@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
+def test_get_next_game_resets_stats_session_after_success(mock_sched_cls, mock_dt, mock_reset):
+    today = date(2026, 3, 28)
+    mock_now = MagicMock()
+    mock_now.date.return_value = today
+    mock_dt.now.return_value = mock_now
+    mock_dt.strptime.side_effect = datetime.strptime
+    df = _make_schedule_df([{
+        "gameId": "0022500001",
+        "homeTeam_teamId": OKC_TEAM_ID,
+        "awayTeam_teamId": 1610612755,
+        "gameDateEst": "2026-03-28",
+        "gameStatusText": "7:00 pm ET",
+    }])
+    mock_sched_cls.return_value.get_data_frames.return_value = [df]
+    nba_client.get_next_game(OKC_TEAM_ID)
+    assert mock_reset.call_count == 1
+
+
+@patch("nba_client._reset_nba_stats_http_session")
+@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
+def test_get_player_info_retry_readtimeout_resets_before_backoff(mock_cls, mock_reset):
+    mock_cls.side_effect = [
+        requests.exceptions.ReadTimeout("read timed out"),
+        MagicMock(get_data_frames=MagicMock(return_value=_mock_player_frames())),
+    ]
+    result = nba_client.get_player_info(MCCAIN_ID)
+    assert result["full_name"] == "Jared McCain"
+    assert mock_cls.call_count == 2
+    assert mock_reset.call_count == 2
+
+
+@patch("nba_client._reset_nba_stats_http_session")
+@patch("nba_client.LivePlayByPlay")
+def test_get_checkins_success_does_not_call_stats_session_reset(mock_pbp_cls, mock_reset):
+    mock_pbp_cls.return_value = _make_pbp_actions([
+        {"actionNumber": 1, "actionType": "2pt", "personId": MCCAIN_ID},
+    ])
+    nba_client.get_checkins("0022500001", MCCAIN_ID, last_event_num=0)
+    assert mock_reset.call_count == 0
