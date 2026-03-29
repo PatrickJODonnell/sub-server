@@ -32,7 +32,7 @@ Interactive API docs: `http://localhost:8000/docs`
 ## Key Constants (hardcoded in `nba_client.py`)
 
 - `CURRENT_SEASON = "2025-26"` — update each season
-- All `nba_api` calls use `timeout=10`
+- All `nba_api` calls use `timeout=30`
 - Jared McCain player ID: `1642272`, OKC Thunder team ID: `1610612760`
 
 ## nba_api Usage Notes
