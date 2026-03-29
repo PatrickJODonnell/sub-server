@@ -31,7 +31,7 @@ def get_player_info(player_id: int) -> dict:
         dict: A dictionary containing information about the player.
     """
     try:
-        info = commonplayerinfo.CommonPlayerInfo(player_id=player_id, timeout=10)
+        info = commonplayerinfo.CommonPlayerInfo(player_id=player_id, timeout=30)
         frames = info.get_data_frames()
         df = frames[0]
         if df.empty:
@@ -107,7 +107,7 @@ def get_next_game(team_id: int) -> dict:
         schedule = scheduleleaguev2.ScheduleLeagueV2(
             league_id="00",
             season=CURRENT_SEASON,
-            timeout=10,
+            timeout=30,
         )
         df = schedule.get_data_frames()[0]
 
@@ -181,7 +181,7 @@ def get_next_game(team_id: int) -> dict:
 
 def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
     try:
-        pbp = LivePlayByPlay(game_id=game_id, timeout=10)
+        pbp = LivePlayByPlay(game_id=game_id, timeout=30)
         actions = pbp.get_dict()["game"]["actions"]
 
         all_event_nums = [int(a["actionNumber"]) for a in actions if "actionNumber" in a]
