@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -165,8 +166,10 @@ def get_next_game(team_id: int) -> dict:
                 pass
 
         has_game_today = row["_parsed_date"] == today
+        game_id = str(row["gameId"])
 
         return {
+            "game_id": game_id,
             "has_game_today": has_game_today,
             "start_time_utc": start_time_utc if has_game_today else None,
         }
@@ -212,5 +215,7 @@ def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
         return {"player_checked_in": sub_in, "last_event_num": max_event_num}
     except HTTPException:
         raise
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=404, detail="Game data not available (game may not have started)")
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"NBA API request failed: {str(e)}")
