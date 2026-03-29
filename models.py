@@ -37,6 +37,7 @@ class PlayerDetail(BaseModel):
 
 
 class NextGame(BaseModel):
+    game_id: Optional[str] = None
     has_game_today: bool
     start_time_utc: Optional[str] = None
 

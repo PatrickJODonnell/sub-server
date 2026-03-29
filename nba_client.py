@@ -1,11 +1,12 @@
+import json
 import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from nba_api.stats.static import players
-from nba_api.stats.endpoints import commonplayerinfo, scheduleleaguev2
 from nba_api.live.nba.endpoints import PlayByPlay as LivePlayByPlay
+from nba_api.stats.endpoints import commonplayerinfo, scheduleleaguev2
+from nba_api.stats.static import players
 
 CURRENT_SEASON = "2025-26"
 # NBA status text uses "1st Qtr", "2nd Qtr", "3rd Qtr", "4th Qtr", "Halftime", "OT1", etc.
@@ -13,48 +14,78 @@ LIVE_STATUS_PATTERN = re.compile(r"(\d+(st|nd|rd|th)\s+Qtr|Halftime|OT\d*)", re.
 
 
 def get_active_players() -> list[dict]:
+    """
+    Returns a list of active NBA players.
+
+    Returns:
+        list[dict]: A list of active NBA players.
+    """
     return players.get_active_players()
 
 
 def get_player_info(player_id: int) -> dict:
+    """
+    Returns information about a specific NBA player.
+
+    Returns:
+        dict: A dictionary containing information about the player.
+    """
     try:
         info = commonplayerinfo.CommonPlayerInfo(player_id=player_id, timeout=10)
         frames = info.get_data_frames()
         df = frames[0]
         if df.empty:
             raise HTTPException(status_code=404, detail="Player not found")
-        row = df.iloc[0]
+        player_row = df.iloc[0]
 
         stats_row = None
-        if len(frames) > 2 and not frames[2].empty:
-            stats_row = frames[2].iloc[0]
+        if len(frames) > 1 and not frames[1].empty:
+            stats_row = frames[1].iloc[0]
 
         def _val(r, key):
+            """
+            Helper function to get the value of a key from a row.
+
+            Args:
+                r (dict): The row to get the value from.
+                key (str): The key to get the value from.
+
+            Returns:
+                The value of the key from the row.
+            """
             v = r.get(key) if hasattr(r, "get") else getattr(r, key, None)
             return None if (v is None or (isinstance(v, float) and v != v)) else v
 
         return {
-            "player_id": int(row["PERSON_ID"]),
-            "full_name": _val(row, "DISPLAY_FIRST_LAST") or "Unknown",
-            "birthdate": str(row["BIRTHDATE"])[:10] if _val(row, "BIRTHDATE") else None,
-            "height": _val(row, "HEIGHT"),
-            "weight": str(_val(row, "WEIGHT")) if _val(row, "WEIGHT") else None,
-            "position": _val(row, "POSITION"),
-            "jersey": str(_val(row, "JERSEY")) if _val(row, "JERSEY") else None,
-            "team_id": int(row["TEAM_ID"]) if _val(row, "TEAM_ID") else None,
-            "team_name": _val(row, "TEAM_NAME"),
-            "team_city": _val(row, "TEAM_CITY"),
-            "team_abbreviation": _val(row, "TEAM_ABBREVIATION"),
-            "season_experience": int(row["SEASON_EXP"]) if _val(row, "SEASON_EXP") is not None else None,
-            "roster_status": _val(row, "ROSTERSTATUS"),
-            "draft_year": str(_val(row, "DRAFT_YEAR")) if _val(row, "DRAFT_YEAR") else None,
-            "draft_round": str(_val(row, "DRAFT_ROUND")) if _val(row, "DRAFT_ROUND") else None,
-            "draft_number": str(_val(row, "DRAFT_NUMBER")) if _val(row, "DRAFT_NUMBER") else None,
+            "player_id": int(player_row["PERSON_ID"]),
+            "full_name": _val(player_row, "DISPLAY_FIRST_LAST") or "Unknown",
+            "birthdate": str(player_row["BIRTHDATE"])[:10] if _val(player_row, "BIRTHDATE") else None,
+            "height": _val(player_row, "HEIGHT"),
+            "weight": str(_val(player_row, "WEIGHT")) if _val(player_row, "WEIGHT") else None,
+            "position": _val(player_row, "POSITION"),
+            "jersey": str(_val(player_row, "JERSEY")) if _val(player_row, "JERSEY") else None,
+            "team_id": int(player_row["TEAM_ID"]) if _val(player_row, "TEAM_ID") else None,
+            "team_name": _val(player_row, "TEAM_NAME"),
+            "team_city": _val(player_row, "TEAM_CITY"),
+            "team_abbreviation": _val(player_row, "TEAM_ABBREVIATION"),
+            "season_experience": int(player_row["SEASON_EXP"]) if _val(player_row, "SEASON_EXP") is not None else None,
+            "roster_status": _val(player_row, "ROSTERSTATUS"),
+            "draft_year": str(_val(player_row, "DRAFT_YEAR")) if _val(player_row, "DRAFT_YEAR") else None,
+            "draft_round": str(_val(player_row, "DRAFT_ROUND")) if _val(player_row, "DRAFT_ROUND") else None,
+            "draft_number": str(_val(player_row, "DRAFT_NUMBER")) if _val(player_row, "DRAFT_NUMBER") else None,
             "season_stats": {
-                "pts": float(stats_row["PTS"]) if stats_row is not None and _val(stats_row, "PTS") is not None else None,
-                "ast": float(stats_row["AST"]) if stats_row is not None and _val(stats_row, "AST") is not None else None,
-                "reb": float(stats_row["REB"]) if stats_row is not None and _val(stats_row, "REB") is not None else None,
-            } if stats_row is not None else None,
+                "pts": float(stats_row["PTS"])
+                if stats_row is not None and _val(stats_row, "PTS") is not None
+                else None,
+                "ast": float(stats_row["AST"])
+                if stats_row is not None and _val(stats_row, "AST") is not None
+                else None,
+                "reb": float(stats_row["REB"])
+                if stats_row is not None and _val(stats_row, "REB") is not None
+                else None,
+            }
+            if stats_row is not None
+            else None,
         }
     except HTTPException:
         raise
@@ -63,6 +94,15 @@ def get_player_info(player_id: int) -> dict:
 
 
 def get_next_game(team_id: int) -> dict:
+    """
+    Returns the next game for a given team.
+
+    Args:
+        team_id (int): The ID of the team to get the next game for.
+
+    Returns:
+        dict: A dictionary containing information about the next game.
+    """
     try:
         schedule = scheduleleaguev2.ScheduleLeagueV2(
             league_id="00",
@@ -71,9 +111,7 @@ def get_next_game(team_id: int) -> dict:
         )
         df = schedule.get_data_frames()[0]
 
-        team_games = df[
-            (df["homeTeam_teamId"] == team_id) | (df["awayTeam_teamId"] == team_id)
-        ].copy()
+        team_games = df[(df["homeTeam_teamId"] == team_id) | (df["awayTeam_teamId"] == team_id)].copy()
 
         if team_games.empty:
             raise HTTPException(status_code=404, detail="No games found for team")
@@ -82,6 +120,15 @@ def get_next_game(team_id: int) -> dict:
         today = datetime.now(ZoneInfo("America/New_York")).date()
 
         def parse_date(val):
+            """
+            Helper function to parse a date from a string.
+
+            Args:
+                val (str): The string to parse the date from.
+
+            Returns:
+                The parsed date.
+            """
             try:
                 return datetime.strptime(str(val)[:10], "%Y-%m-%d").date()
             except Exception:
@@ -94,9 +141,9 @@ def get_next_game(team_id: int) -> dict:
             raise HTTPException(status_code=404, detail="No upcoming games found for team")
 
         # Prioritize live games
-        live_games = upcoming[upcoming["gameStatusText"].apply(
-            lambda s: bool(LIVE_STATUS_PATTERN.match(str(s).strip()))
-        )]
+        live_games = upcoming[
+            upcoming["gameStatusText"].apply(lambda s: bool(LIVE_STATUS_PATTERN.match(str(s).strip())))
+        ]
 
         if not live_games.empty:
             row = live_games.iloc[0]
@@ -118,9 +165,11 @@ def get_next_game(team_id: int) -> dict:
             except Exception:
                 pass
 
-        has_game_today = (row["_parsed_date"] == today)
+        has_game_today = row["_parsed_date"] == today
+        game_id = str(row["gameId"])
 
         return {
+            "game_id": game_id,
             "has_game_today": has_game_today,
             "start_time_utc": start_time_utc if has_game_today else None,
         }
@@ -159,14 +208,14 @@ def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
 
         # Check new events for a SUB IN for the player
         sub_in = any(
-            a.get("actionType") == "substitution"
-            and a.get("subType") == "in"
-            and a.get("personId") == player_id
+            a.get("actionType") == "substitution" and a.get("subType") == "in" and a.get("personId") == player_id
             for a in new_actions
         )
 
         return {"player_checked_in": sub_in, "last_event_num": max_event_num}
     except HTTPException:
         raise
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=404, detail="Game data not available (game may not have started)")
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"NBA API request failed: {str(e)}")
