@@ -12,6 +12,13 @@ MCCAIN_ID = 1642272
 OKC_TEAM_ID = 1610612760
 
 
+@pytest.fixture(autouse=True)
+def _clear_caches_and_fast_retry(monkeypatch):
+    """Clear caches and skip retry sleeps for all tests."""
+    nba_client.clear_caches()
+    monkeypatch.setattr("nba_client.time.sleep", lambda _: None)
+
+
 # ── get_active_players ──────────────────────────────────────────────
 
 
@@ -398,3 +405,127 @@ def test_checkins_api_failure_503(mock_pbp_cls):
     with pytest.raises(HTTPException) as exc_info:
         nba_client.get_checkins("0022500001", MCCAIN_ID)
     assert exc_info.value.status_code == 503
+
+
+# ── Caching tests ──────────────────────────────────────────────────
+
+
+@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
+def test_get_player_info_cache_hit(mock_cls):
+    """Second call with same player_id uses cache, API called once."""
+    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames()
+    nba_client.get_player_info(MCCAIN_ID)
+    nba_client.get_player_info(MCCAIN_ID)
+    assert mock_cls.call_count == 1
+
+
+@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
+def test_get_player_info_cache_miss_different_id(mock_cls):
+    """Different player_id triggers a new API call."""
+    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames()
+    nba_client.get_player_info(MCCAIN_ID)
+    nba_client.get_player_info(203999)
+    assert mock_cls.call_count == 2
+
+
+@patch("nba_client.datetime")
+@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
+def test_get_next_game_cache_hit(mock_sched_cls, mock_dt):
+    """Second call with same team_id uses cache."""
+    today = date(2026, 3, 28)
+    mock_now = MagicMock()
+    mock_now.date.return_value = today
+    mock_dt.now.return_value = mock_now
+    mock_dt.strptime.side_effect = datetime.strptime
+    df = _make_schedule_df([{
+        "gameId": "0022500001", "homeTeam_teamId": OKC_TEAM_ID,
+        "awayTeam_teamId": 1610612755, "gameDateEst": "2026-03-28",
+        "gameStatusText": "7:00 pm ET",
+    }])
+    mock_sched_cls.return_value.get_data_frames.return_value = [df]
+    nba_client.get_next_game(OKC_TEAM_ID)
+    nba_client.get_next_game(OKC_TEAM_ID)
+    assert mock_sched_cls.call_count == 1
+
+
+@patch("nba_client.LivePlayByPlay")
+def test_checkins_not_cached(mock_pbp_cls):
+    """get_checkins is not cached — each call hits the API."""
+    mock_pbp_cls.return_value = _make_pbp_actions([
+        {"actionNumber": 1, "actionType": "2pt", "personId": MCCAIN_ID},
+    ])
+    nba_client.get_checkins("0022500001", MCCAIN_ID, last_event_num=0)
+    nba_client.get_checkins("0022500001", MCCAIN_ID, last_event_num=0)
+    assert mock_pbp_cls.call_count == 2
+
+
+# ── Retry tests ────────────────────────────────────────────────────
+
+
+@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
+def test_get_player_info_retry_success(mock_cls):
+    """First attempt fails, second succeeds."""
+    mock_cls.side_effect = [
+        ConnectionError("timeout"),
+        MagicMock(get_data_frames=MagicMock(return_value=_mock_player_frames())),
+    ]
+    result = nba_client.get_player_info(MCCAIN_ID)
+    assert result["full_name"] == "Jared McCain"
+    assert mock_cls.call_count == 2
+
+
+@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
+def test_get_player_info_retry_exhaustion(mock_cls):
+    """All 3 attempts fail — raises 503."""
+    mock_cls.side_effect = ConnectionError("timeout")
+    with pytest.raises(HTTPException) as exc_info:
+        nba_client.get_player_info(MCCAIN_ID)
+    assert exc_info.value.status_code == 503
+    assert mock_cls.call_count == 3
+
+
+@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
+def test_get_player_info_no_retry_on_http_exception(mock_cls):
+    """HTTPException (e.g. 404) is not retried."""
+    mock_cls.return_value.get_data_frames.return_value = [pd.DataFrame(), pd.DataFrame()]
+    with pytest.raises(HTTPException) as exc_info:
+        nba_client.get_player_info(MCCAIN_ID)
+    assert exc_info.value.status_code == 404
+    assert mock_cls.call_count == 1
+
+
+@patch("nba_client.datetime")
+@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
+def test_get_next_game_retry_success(mock_sched_cls, mock_dt):
+    """First attempt fails, second succeeds for next-game."""
+    today = date(2026, 3, 28)
+    mock_now = MagicMock()
+    mock_now.date.return_value = today
+    mock_dt.now.return_value = mock_now
+    mock_dt.strptime.side_effect = datetime.strptime
+    df = _make_schedule_df([{
+        "gameId": "0022500001", "homeTeam_teamId": OKC_TEAM_ID,
+        "awayTeam_teamId": 1610612755, "gameDateEst": "2026-03-28",
+        "gameStatusText": "7:00 pm ET",
+    }])
+    mock_sched_cls.side_effect = [
+        ConnectionError("timeout"),
+        MagicMock(get_data_frames=MagicMock(return_value=[df])),
+    ]
+    result = nba_client.get_next_game(OKC_TEAM_ID)
+    assert result["has_game_today"] is True
+    assert mock_sched_cls.call_count == 2
+
+
+@patch("nba_client.LivePlayByPlay")
+def test_get_checkins_retry_success(mock_pbp_cls):
+    """First attempt fails, second succeeds for checkins."""
+    mock_pbp_cls.side_effect = [
+        ConnectionError("timeout"),
+        _make_pbp_actions([
+            {"actionNumber": 1, "actionType": "2pt", "personId": MCCAIN_ID},
+        ]),
+    ]
+    result = nba_client.get_checkins("0022500001", MCCAIN_ID, last_event_num=0)
+    assert result["player_checked_in"] is True
+    assert mock_pbp_cls.call_count == 2

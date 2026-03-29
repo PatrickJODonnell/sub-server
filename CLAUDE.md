@@ -32,8 +32,16 @@ Interactive API docs: `http://localhost:8000/docs`
 ## Key Constants (hardcoded in `nba_client.py`)
 
 - `CURRENT_SEASON = "2025-26"` — update each season
-- All `nba_api` calls use `timeout=30`
+- All `nba_api` calls use `timeout=15`, with retry (3 attempts, exponential backoff)
 - Jared McCain player ID: `1642272`, OKC Thunder team ID: `1610612760`
+
+## Caching & Retry
+
+- `get_player_info` — cached 5 min by player_id (TTLCache)
+- `get_next_game` — cached 2 min by team_id (TTLCache)
+- `get_checkins` — never cached (real-time data)
+- All nba_api calls retry up to 3 times with exponential backoff on transient errors
+- `clear_caches()` helper available for test isolation
 
 ## nba_api Usage Notes
 

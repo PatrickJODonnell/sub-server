@@ -1,14 +1,42 @@
 import json
 import re
+import threading
+import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from cachetools import TTLCache, cached
 from fastapi import HTTPException
 from nba_api.live.nba.endpoints import PlayByPlay as LivePlayByPlay
 from nba_api.stats.endpoints import commonplayerinfo, scheduleleaguev2
 from nba_api.stats.static import players
 
 CURRENT_SEASON = "2025-26"
+
+_player_cache = TTLCache(maxsize=128, ttl=300)  # 5 minutes
+_player_cache_lock = threading.Lock()
+
+_next_game_cache = TTLCache(maxsize=32, ttl=120)  # 2 minutes
+_next_game_cache_lock = threading.Lock()
+
+
+def _retry_call(call_fn, max_attempts=3, backoff_base=1.0):
+    """Retry a callable on transient errors with exponential backoff."""
+    for attempt in range(max_attempts):
+        try:
+            return call_fn()
+        except Exception:
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep(backoff_base * (2 ** attempt))
+
+
+def clear_caches():
+    """Clear all caches. Useful for testing."""
+    with _player_cache_lock:
+        _player_cache.clear()
+    with _next_game_cache_lock:
+        _next_game_cache.clear()
 # NBA status text uses "1st Qtr", "2nd Qtr", "3rd Qtr", "4th Qtr", "Halftime", "OT1", etc.
 LIVE_STATUS_PATTERN = re.compile(r"(\d+(st|nd|rd|th)\s+Qtr|Halftime|OT\d*)", re.IGNORECASE)
 
@@ -23,6 +51,7 @@ def get_active_players() -> list[dict]:
     return players.get_active_players()
 
 
+@cached(cache=_player_cache, lock=_player_cache_lock)
 def get_player_info(player_id: int) -> dict:
     """
     Returns information about a specific NBA player.
@@ -31,7 +60,7 @@ def get_player_info(player_id: int) -> dict:
         dict: A dictionary containing information about the player.
     """
     try:
-        info = commonplayerinfo.CommonPlayerInfo(player_id=player_id, timeout=30)
+        info = _retry_call(lambda: commonplayerinfo.CommonPlayerInfo(player_id=player_id, timeout=15))
         frames = info.get_data_frames()
         df = frames[0]
         if df.empty:
@@ -93,6 +122,7 @@ def get_player_info(player_id: int) -> dict:
         raise HTTPException(status_code=503, detail=f"NBA API request failed: {str(e)}")
 
 
+@cached(cache=_next_game_cache, lock=_next_game_cache_lock)
 def get_next_game(team_id: int) -> dict:
     """
     Returns the next game for a given team.
@@ -104,11 +134,11 @@ def get_next_game(team_id: int) -> dict:
         dict: A dictionary containing information about the next game.
     """
     try:
-        schedule = scheduleleaguev2.ScheduleLeagueV2(
+        schedule = _retry_call(lambda: scheduleleaguev2.ScheduleLeagueV2(
             league_id="00",
             season=CURRENT_SEASON,
-            timeout=30,
-        )
+            timeout=15,
+        ))
         df = schedule.get_data_frames()[0]
 
         team_games = df[(df["homeTeam_teamId"] == team_id) | (df["awayTeam_teamId"] == team_id)].copy()
@@ -181,7 +211,7 @@ def get_next_game(team_id: int) -> dict:
 
 def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
     try:
-        pbp = LivePlayByPlay(game_id=game_id, timeout=30)
+        pbp = _retry_call(lambda: LivePlayByPlay(game_id=game_id, timeout=15))
         actions = pbp.get_dict()["game"]["actions"]
 
         all_event_nums = [int(a["actionNumber"]) for a in actions if "actionNumber" in a]

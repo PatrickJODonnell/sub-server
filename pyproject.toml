@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Sub-Server for the NBA Check-In Tracker"
 requires-python = ">=3.11"
 dependencies = [
+    "cachetools>=7.0.5",
     "fastapi[standard]>=0.110.0",
     "nba-api>=1.5.0",
     "pandas>=2.0.0",
