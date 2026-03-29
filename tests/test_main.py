@@ -16,12 +16,12 @@ OKC_TEAM_ID = 1610612760
 @patch("nba_client.get_active_players")
 def test_list_players(mock_get):
     mock_get.return_value = [
-        {"id": MCCAIN_ID, "full_name": "Jared McCain",
-         "first_name": "Jared", "last_name": "McCain", "is_active": True},
+        {"id": MCCAIN_ID, "full_name": "Jared McCain", "first_name": "Jared", "last_name": "McCain", "is_active": True},
     ]
     resp = client.get("/players")
     assert resp.status_code == 200
     data = resp.json()
+    print(data)
     assert len(data) == 1
     assert data[0]["player_id"] == MCCAIN_ID
     assert data[0]["full_name"] == "Jared McCain"
