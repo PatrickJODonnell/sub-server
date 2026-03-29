@@ -1,13 +1,13 @@
 import re
 
-import nba_client
 from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
+
+import nba_client
 from models import CheckInResponse, NextGame, PlayerDetail, PlayerSummary, SeasonStats
 
 app = FastAPI(title="NBA Check-In Tracker")
 
-# TODO -> Tailor access once api functionality is verified
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
