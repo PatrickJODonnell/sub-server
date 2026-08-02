@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Optional
 
 
 class PlayerSummary(BaseModel):
@@ -11,33 +10,33 @@ class PlayerSummary(BaseModel):
 
 
 class SeasonStats(BaseModel):
-    pts: Optional[float]
-    ast: Optional[float]
-    reb: Optional[float]
+    pts: float | None
+    ast: float | None
+    reb: float | None
 
 
 class NextGame(BaseModel):
-    game_id: Optional[str] = None
+    game_id: str
     has_game_today: bool
-    start_time_utc: Optional[str] = None
+    start_time_utc: str
 
 
 class PlayerDetail(BaseModel):
     player_id: int
     full_name: str
-    birthdate: Optional[str]
-    height: Optional[str]
-    weight: Optional[str]
-    position: Optional[str]
-    jersey: Optional[str]
-    team_name: Optional[str]
-    season_experience: Optional[int]
-    roster_status: Optional[str]
-    draft_year: Optional[str]
-    draft_round: Optional[str]
-    draft_number: Optional[str]
-    season_stats: Optional[SeasonStats]
-    next_game: Optional[NextGame] = None
+    birthdate: str | None
+    height: str | None
+    weight: str | None
+    position: str | None
+    jersey: str | None
+    team_name: str | None
+    season_experience: int | None
+    roster_status: str | None
+    draft_year: str | None
+    draft_round: str | None
+    draft_number: str | None
+    season_stats: SeasonStats
+    next_game: NextGame
 
 
 class CheckInResponse(BaseModel):
