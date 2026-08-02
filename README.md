@@ -26,22 +26,23 @@ Interactive API docs are available at `http://localhost:8000/docs` once the serv
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/players` | List all active NBA players |
-| GET | `/players/{player_id}` | Get player details and current season stats |
-| GET | `/teams/{team_id}/next-game` | Check if a team plays today and get start time |
+| GET | `/players/{player_name}` | Get player details, current season stats, and the player's current team's next game |
 | GET | `/games/{game_id}/checkins/{player_id}` | Poll for player check-in events during a live game |
 
 ### Notable IDs
 
-| Entity | ID |
-|--------|----|
-| Jared McCain | `1642272` |
-| OKC Thunder | `1610612760` |
+`/players` returns nba_api's numeric `personId`. `/players/{player_name}` (and everything derived from it — `next_game.game_id`, and the `player_id` you should pass to `/checkins`) uses ESPN's own numeric ids instead. These are two different id spaces:
+
+| Entity | nba_api `personId` | ESPN id |
+|--------|---------------------|---------|
+| Jared McCain | `1642272` | `4683778` |
+| OKC Thunder | `1610612760` | — |
 
 ### Check-In Polling
 
-The `/games/{game_id}/checkins/{player_id}` endpoint is designed for polling during a live game.
+The `/games/{game_id}/checkins/{player_id}` endpoint is designed for polling during a live game. Both ids are ESPN's: `game_id` is an ESPN event id (the same one returned as `next_game.game_id` from `/players/{player_name}`), and `player_id` is an ESPN athlete id (the same one returned as `player_id` from `/players/{player_name}`).
 
-- `game_id` must be a 10-digit string (e.g. `0022500001`)
+- `game_id` must be a numeric string (e.g. `401898389`)
 - Pass `last_event_num=0` on the first request — the server returns whether the player is currently on court
 - On subsequent requests, pass back the `last_event_num` from the previous response — the server returns whether a new sub-in occurred since then
 
@@ -59,21 +60,19 @@ Three-layer structure with clear separation of concerns:
 
 ```
 main.py         — FastAPI app, route definitions, request validation
-nba_client.py   — All business logic; wraps nba_api calls, returns plain dicts
+sub_client.py   — All business logic; wraps ESPN's public API, returns plain dicts
 models.py       — Pydantic v2 response schemas, no logic
 ```
 
-All `nba_api` calls use a **15-second** timeout, with up to **3 retries** and exponential backoff on transient failures. stats.nba.com is unreliable, so every call is wrapped in try/except and returns a `503` on failure.
+All ESPN calls use a **15-second** timeout, with up to **3 retries** and exponential backoff on transient failures. Every call is wrapped in try/except and returns a `503` on failure.
 
-### Stats API HTTP sessions
+### Why ESPN instead of nba_api
 
-Endpoints that use `nba_api.stats.endpoints` (`/players/{player_id}`, `/teams/{team_id}/next-game`) talk to **stats.nba.com** through `nba_api`'s shared `requests.Session`. In a long-lived process (typical for cloud hosting), reusing that session for consecutive stats calls can cause the next request to hang or time out — see [nba_api issue #633](https://github.com/swar/nba_api/issues/633).
-
-`nba_client.py` mitigates this by **closing and dropping** that cached session in a `finally` block after each **stats** workflow finishes (player detail and league schedule). The shared retry helper also clears the session **before backoff** on `Timeout` or `ConnectionError`, including for live play-by-play, since `nba_api` reuses the same underlying session cache across HTTP clients.
+`stats.nba.com` and `cdn.nba.com` are IP-blocked from the deployed cloud host. Both `/players/{player_name}` (search, core athlete document, season statistics, team next-event) and `/games/{game_id}/checkins/{player_id}` (play-by-play via ESPN's `summary` endpoint) are backed entirely by ESPN's public APIs instead. The only remaining `nba_api` usage is `/players`' active-player list, via `nba_api.stats.static.players` — a local static lookup with no network call.
 
 ## Testing
 
-Tests use `pytest` and mock all external `nba_api` calls — no network access required.
+Tests use `pytest` and mock all external API calls — no network access required.
 
 ```bash
 uv run pytest tests/ -v
@@ -81,8 +80,8 @@ uv run pytest tests/ -v
 
 Test files:
 
-- `tests/test_main.py` — Route-level tests via FastAPI `TestClient` (11 tests)
-- `tests/test_nba_client.py` — Business logic unit tests (19 tests)
+- `tests/test_main.py` — Route-level tests via FastAPI `TestClient`
+- `tests/test_sub_client.py` — Business logic unit tests
 
 ## Deployment
 
@@ -103,8 +102,4 @@ The workflow requires two GitHub Actions secrets:
 
 ## Key Constants
 
-Defined in `nba_client.py` — update these each season:
-
-```python
-CURRENT_SEASON = "2025-26"
-```
+`sub_client.py`'s `_get_current_season()` derives the current season string (`"YYYY-YY"`) from today's date — update its month cutoffs if the league schedule shifts.
