@@ -186,8 +186,10 @@ def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
             timeout=15,
         ))
         data = response.json()
+        print(data)
         if response.status_code != 200 or "plays" not in data:
-            raise HTTPException(status_code=404, detail="Game data not available (game may not have started)")
+            print("Game data not available (game may not have started)")
+            return {"player_checked_in": False, "last_event_num": 0}
         plays = data["plays"]
 
         def _seq(play: dict) -> int:
@@ -228,4 +230,7 @@ def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
 
 
 if __name__ == "__main__":
-    get_player_info("Jared McCain")
+    result = get_player_info("Jared McCain")
+    game_id = result.get('next_game').get('game_id')
+    player_id = result.get('player_id')
+    print(get_checkins(game_id=game_id, player_id=player_id))
