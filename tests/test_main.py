@@ -13,7 +13,7 @@ MCCAIN_ID = 1642272
 # ── GET /players ────────────────────────────────────────────────────
 
 
-@patch("nba_client.get_active_players")
+@patch("sub_client.get_active_players")
 def test_list_players(mock_get):
     mock_get.return_value = [
         {"id": MCCAIN_ID, "full_name": "Jared McCain", "first_name": "Jared", "last_name": "McCain", "is_active": True},
@@ -29,7 +29,7 @@ def test_list_players(mock_get):
     assert data[0]["is_active"] is True
 
 
-@patch("nba_client.get_active_players")
+@patch("sub_client.get_active_players")
 def test_list_players_empty(mock_get):
     mock_get.return_value = []
     resp = client.get("/players")
@@ -37,7 +37,7 @@ def test_list_players_empty(mock_get):
     assert resp.json() == []
 
 
-@patch("nba_client.get_active_players")
+@patch("sub_client.get_active_players")
 def test_list_players_multiple(mock_get):
     mock_get.return_value = [
         {"id": MCCAIN_ID, "full_name": "Jared McCain", "first_name": "Jared", "last_name": "McCain", "is_active": True},
@@ -55,7 +55,7 @@ def test_list_players_multiple(mock_get):
 # ── GET /players/{player_id} ───────────────────────────────────────
 
 
-@patch("nba_client.get_player_info")
+@patch("sub_client.get_player_info")
 def test_get_player_with_stats(mock_info):
     mock_info.return_value = {
         "player_id": MCCAIN_ID,
@@ -100,7 +100,7 @@ def test_get_player_with_stats(mock_info):
     assert isinstance(data["next_game"]["start_time_utc"], str)
 
 
-@patch("nba_client.get_player_info")
+@patch("sub_client.get_player_info")
 def test_get_player_without_stats(mock_info):
     mock_info.return_value = {
         "player_id": MCCAIN_ID,
@@ -134,14 +134,14 @@ def test_get_player_without_stats(mock_info):
     assert data["next_game"]["start_time_utc"] == ""
 
 
-@patch("nba_client.get_player_info")
+@patch("sub_client.get_player_info")
 def test_get_player_not_found(mock_info):
     mock_info.side_effect = HTTPException(status_code=404, detail="Player not found")
     resp = client.get("/players/Jared McCain")
     assert resp.status_code == 404
 
 
-@patch("nba_client.get_player_info")
+@patch("sub_client.get_player_info")
 def test_get_player_api_failure(mock_info):
     mock_info.side_effect = HTTPException(status_code=503, detail="NBA API request failed")
     resp = client.get("/players/Jared McCain")
@@ -153,7 +153,7 @@ def test_get_player_api_failure(mock_info):
 CHECKIN_GAME_ID = "401898389"
 
 
-@patch("nba_client.get_checkins")
+@patch("sub_client.get_checkins")
 def test_checkins_valid_game_id(mock_ci):
     mock_ci.return_value = {"player_checked_in": True, "last_event_num": 42}
     resp = client.get(f"/games/{CHECKIN_GAME_ID}/checkins/{MCCAIN_ID}")
@@ -165,7 +165,7 @@ def test_checkins_valid_game_id(mock_ci):
     assert data["last_event_num"] == 42
 
 
-@patch("nba_client.get_checkins")
+@patch("sub_client.get_checkins")
 def test_checkins_with_last_event_num(mock_ci):
     mock_ci.return_value = {"player_checked_in": False, "last_event_num": 100}
     resp = client.get(f"/games/{CHECKIN_GAME_ID}/checkins/{MCCAIN_ID}?last_event_num=50")
@@ -176,14 +176,14 @@ def test_checkins_with_last_event_num(mock_ci):
     mock_ci.assert_called_once_with(CHECKIN_GAME_ID, MCCAIN_ID, 50)
 
 
-@patch("nba_client.get_checkins")
+@patch("sub_client.get_checkins")
 def test_checkins_game_not_started(mock_ci):
     mock_ci.side_effect = HTTPException(status_code=404, detail="Game data not available")
     resp = client.get(f"/games/{CHECKIN_GAME_ID}/checkins/{MCCAIN_ID}")
     assert resp.status_code == 404
 
 
-@patch("nba_client.get_checkins")
+@patch("sub_client.get_checkins")
 def test_checkins_api_failure(mock_ci):
     mock_ci.side_effect = HTTPException(status_code=503, detail="NBA API request failed")
     resp = client.get(f"/games/{CHECKIN_GAME_ID}/checkins/{MCCAIN_ID}")

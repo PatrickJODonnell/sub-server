@@ -60,7 +60,7 @@ Three-layer structure with clear separation of concerns:
 
 ```
 main.py         — FastAPI app, route definitions, request validation
-nba_client.py   — All business logic; wraps ESPN's public API, returns plain dicts
+sub_client.py   — All business logic; wraps ESPN's public API, returns plain dicts
 models.py       — Pydantic v2 response schemas, no logic
 ```
 
@@ -81,7 +81,7 @@ uv run pytest tests/ -v
 Test files:
 
 - `tests/test_main.py` — Route-level tests via FastAPI `TestClient`
-- `tests/test_nba_client.py` — Business logic unit tests
+- `tests/test_sub_client.py` — Business logic unit tests
 
 ## Deployment
 
@@ -102,4 +102,4 @@ The workflow requires two GitHub Actions secrets:
 
 ## Key Constants
 
-`nba_client.py`'s `_get_current_season()` derives the current season string (`"YYYY-YY"`) from today's date — update its month cutoffs if the league schedule shifts.
+`sub_client.py`'s `_get_current_season()` derives the current season string (`"YYYY-YY"`) from today's date — update its month cutoffs if the league schedule shifts.

@@ -3,7 +3,7 @@ import re
 from fastapi import FastAPI, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
 
-import nba_client
+import sub_client
 from models import CheckInResponse, NextGame, PlayerDetail, PlayerSummary, SeasonStats
 
 app = FastAPI(title="NBA Check-In Tracker")
@@ -21,7 +21,7 @@ GAME_ID_PATTERN = re.compile(r"^\d+$")
 
 @app.get("/players", response_model=list[PlayerSummary])
 def list_players():
-    all_players = nba_client.get_active_players()
+    all_players = sub_client.get_active_players()
     return [
         PlayerSummary(
             player_id=p["id"],
@@ -36,7 +36,7 @@ def list_players():
 
 @app.get("/players/{player_name}", response_model=PlayerDetail)
 def get_player(player_name: str):
-    data = nba_client.get_player_info(player_name)
+    data = sub_client.get_player_info(player_name)
     season_stats = SeasonStats(**data["season_stats"])
     next_game = NextGame(**data["next_game"])
     return PlayerDetail(**{**data, "season_stats": season_stats, "next_game": next_game})
@@ -50,5 +50,5 @@ def get_checkins(
 ):
     if not GAME_ID_PATTERN.match(game_id):
         raise HTTPException(status_code=422, detail="game_id must be a numeric string")
-    data = nba_client.get_checkins(game_id, player_id, last_event_num)
+    data = sub_client.get_checkins(game_id, player_id, last_event_num)
     return CheckInResponse(**data)

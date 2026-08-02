@@ -17,7 +17,7 @@ Interactive API docs: `http://localhost:8000/docs`
 3-layer structure with clear separation of concerns:
 
 - **`main.py`** — FastAPI app, route definitions, CORS middleware, request validation (e.g. game_id regex `^\d+$`)
-- **`nba_client.py`** — Pure functions wrapping ESPN's public API. All business logic lives here: JSON parsing, date/time math, check-in event logic. Returns dicts (models are built in main.py).
+- **`sub_client.py`** — Pure functions wrapping ESPN's public API. All business logic lives here: JSON parsing, date/time math, check-in event logic. Returns dicts (models are built in main.py).
 - **`models.py`** — Pydantic v2 response schemas, no logic.
 
 ## API Endpoints
@@ -30,7 +30,7 @@ Interactive API docs: `http://localhost:8000/docs`
 
 There is no standalone next-game endpoint — `get_player_info()` resolves the player's current ESPN team and pulls its next scheduled/live game (via `site.api.espn.com`'s `team.nextEvent`) as part of the same lookup, nested under `next_game` in `PlayerDetail`. `next_game.game_id` is ESPN's own event id, and it's directly usable as the `game_id` path segment for `/games/{game_id}/checkins/{player_id}` — `get_checkins` is ESPN-backed too, so both endpoints share the same id space.
 
-## Key Constants (hardcoded in `nba_client.py`)
+## Key Constants (hardcoded in `sub_client.py`)
 
 - `_get_current_season()` derives the current season string (`"YYYY-YY"`) from today's date — update its month cutoffs if the league schedule shifts
 - All ESPN calls use `timeout=15`, with retry (3 attempts, exponential backoff)
