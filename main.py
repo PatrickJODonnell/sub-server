@@ -34,7 +34,7 @@ def list_players():
     ]
 
 
-@app.get("/players/{player_id}", response_model=PlayerDetail)
+@app.get("/players/{player_name}", response_model=PlayerDetail)
 def get_player(player_name: str):
     data = nba_client.get_player_info(player_name)
     season_stats = None
