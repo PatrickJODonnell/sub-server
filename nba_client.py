@@ -1,5 +1,4 @@
 # ruff: noqa: BLE001
-import json
 import re
 import time
 from datetime import datetime, timezone
@@ -7,9 +6,6 @@ from zoneinfo import ZoneInfo
 
 import requests
 from fastapi import HTTPException
-from nba_api.library.http import NBAHTTP
-from nba_api.live.nba.endpoints import PlayByPlay as LivePlayByPlay
-from nba_api.stats.library.http import NBAStatsHTTP
 from nba_api.stats.static import players
 
 
@@ -30,33 +26,14 @@ def _get_current_season() -> str:
 
 
 
-def _reset_nba_stats_http_session() -> None:
-    """Close and discard nba_api's cached Session (NBAStatsHTTP / NBAHTTP).
-
-    Reusing one keep-alive connection across multiple stats.nba.com calls can hang
-    subsequent requests in the same process (see nba_api issue #633).
-    """
-    sess = NBAHTTP._session
-    if sess is not None:
-        try:
-            sess.close()
-        except Exception as e:
-            print("Exception during session close: ", e)
-    NBAHTTP._session = None
-    if "_session" in NBAStatsHTTP.__dict__:
-        del NBAStatsHTTP._session
-
-
 def _retry_call(call_fn, max_attempts=3, backoff_base=1.0):
     """Retry a callable on transient errors with exponential backoff."""
     for attempt in range(max_attempts):
         try:
             return call_fn()
-        except Exception as e:
+        except Exception:
             if attempt == max_attempts - 1:
                 raise
-            if isinstance(e, (requests.exceptions.Timeout, ConnectionError)):
-                _reset_nba_stats_http_session()
             time.sleep(backoff_base * (2 ** attempt))
 
 
@@ -71,6 +48,23 @@ def _find_espn_stat(categories: list[dict], stat_name: str):
             if stat.get("name") == stat_name:
                 return stat.get("value")
     return None
+
+
+def _participant_athlete_id(play: dict, index: int) -> int | None:
+    """Return the athlete id at `participants[index]` in an ESPN play, or None."""
+    participants = play.get("participants") or []
+    if len(participants) <= index:
+        return None
+    athlete_id = ((participants[index].get("athlete") or {}).get("id"))
+    return int(athlete_id) if athlete_id is not None else None
+
+
+def _play_has_player(play: dict, player_id: int) -> bool:
+    """Whether player_id appears as any participant (entering, leaving, or otherwise) in an ESPN play."""
+    return any(
+        ((p.get("athlete") or {}).get("id")) is not None and int(p["athlete"]["id"]) == player_id
+        for p in (play.get("participants") or [])
+    )
 
 
 def get_active_players() -> list[dict]:
@@ -187,44 +181,50 @@ def get_player_info(player_name: str) -> dict:
 
 def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
     try:
-        pbp = _retry_call(lambda: LivePlayByPlay(game_id=game_id, timeout=15))
-        actions = pbp.get_dict()["game"]["actions"]
+        response = _retry_call(lambda: requests.get(
+            f'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={game_id}',
+            timeout=15,
+        ))
+        data = response.json()
+        if response.status_code != 200 or "plays" not in data:
+            raise HTTPException(status_code=404, detail="Game data not available (game may not have started)")
+        plays = data["plays"]
 
-        all_event_nums = [int(a["actionNumber"]) for a in actions if "actionNumber" in a]
-        max_event_num = max(all_event_nums) if all_event_nums else 0
+        def _seq(play: dict) -> int:
+            return int(play.get("sequenceNumber", 0))
 
-        new_actions = [a for a in actions if int(a.get("actionNumber", 0)) > last_event_num]
+        max_event_num = max((_seq(p) for p in plays), default=0)
+        new_plays = [p for p in plays if _seq(p) > last_event_num]
+
+        def _is_sub(play: dict) -> bool:
+            return (play.get("type") or {}).get("text") == "Substitution"
 
         # Special case: first poll (last_event_num == 0) — check if player is currently on court
         if last_event_num == 0:
-            subs = [a for a in actions if a.get("actionType") == "substitution"]
-            all_player_subs = sorted(
-                [a for a in subs if a.get("personId") == player_id],
-                key=lambda x: x["actionNumber"],
+            player_subs = sorted(
+                (p for p in plays if _is_sub(p) and _play_has_player(p, player_id)),
+                key=_seq,
             )
-            if all_player_subs:
-                is_on_court = all_player_subs[-1].get("subType") == "in"
+            if player_subs:
+                is_on_court = _participant_athlete_id(player_subs[-1], 0) == player_id
             else:
                 # No subs — player may be a starter who hasn't been subbed out yet.
-                # Check if they have any game actions (shots, fouls, etc.)
-                player_actions = [a for a in actions if a.get("personId") == player_id]
-                is_on_court = len(player_actions) > 0
+                # Check if they show up as a participant in any play (shots, fouls, etc.)
+                is_on_court = any(_play_has_player(p, player_id) for p in plays)
             if is_on_court:
                 return {"player_checked_in": True, "last_event_num": max_event_num}
 
-        # Check new events for a SUB IN for the player
+        # Check new plays for a SUB IN (entering participant) for the player
         sub_in = any(
-            a.get("actionType") == "substitution" and a.get("subType") == "in" and a.get("personId") == player_id
-            for a in new_actions
+            _is_sub(p) and _participant_athlete_id(p, 0) == player_id
+            for p in new_plays
         )
 
         return {"player_checked_in": sub_in, "last_event_num": max_event_num}
     except HTTPException:
         raise
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=404, detail="Game data not available (game may not have started)")
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"NBA API request failed: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"NBA API request failed: {e!s}")
 
 
 if __name__ == "__main__":

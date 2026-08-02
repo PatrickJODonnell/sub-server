@@ -150,11 +150,13 @@ def test_get_player_api_failure(mock_info):
 
 # ── GET /games/{game_id}/checkins/{player_id} ───────────────────────
 
+CHECKIN_GAME_ID = "401898389"
+
 
 @patch("nba_client.get_checkins")
 def test_checkins_valid_game_id(mock_ci):
     mock_ci.return_value = {"player_checked_in": True, "last_event_num": 42}
-    resp = client.get(f"/games/0022500001/checkins/{MCCAIN_ID}")
+    resp = client.get(f"/games/{CHECKIN_GAME_ID}/checkins/{MCCAIN_ID}")
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["player_checked_in"], bool)
@@ -166,38 +168,28 @@ def test_checkins_valid_game_id(mock_ci):
 @patch("nba_client.get_checkins")
 def test_checkins_with_last_event_num(mock_ci):
     mock_ci.return_value = {"player_checked_in": False, "last_event_num": 100}
-    resp = client.get(f"/games/0022500001/checkins/{MCCAIN_ID}?last_event_num=50")
+    resp = client.get(f"/games/{CHECKIN_GAME_ID}/checkins/{MCCAIN_ID}?last_event_num=50")
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["player_checked_in"], bool)
     assert isinstance(data["last_event_num"], int)
-    mock_ci.assert_called_once_with("0022500001", MCCAIN_ID, 50)
+    mock_ci.assert_called_once_with(CHECKIN_GAME_ID, MCCAIN_ID, 50)
 
 
 @patch("nba_client.get_checkins")
 def test_checkins_game_not_started(mock_ci):
     mock_ci.side_effect = HTTPException(status_code=404, detail="Game data not available")
-    resp = client.get(f"/games/0022500001/checkins/{MCCAIN_ID}")
+    resp = client.get(f"/games/{CHECKIN_GAME_ID}/checkins/{MCCAIN_ID}")
     assert resp.status_code == 404
 
 
 @patch("nba_client.get_checkins")
 def test_checkins_api_failure(mock_ci):
     mock_ci.side_effect = HTTPException(status_code=503, detail="NBA API request failed")
-    resp = client.get(f"/games/0022500001/checkins/{MCCAIN_ID}")
+    resp = client.get(f"/games/{CHECKIN_GAME_ID}/checkins/{MCCAIN_ID}")
     assert resp.status_code == 503
-
-
-def test_checkins_invalid_game_id_short():
-    resp = client.get(f"/games/12345/checkins/{MCCAIN_ID}")
-    assert resp.status_code == 422
 
 
 def test_checkins_invalid_game_id_alpha():
     resp = client.get(f"/games/abcdefghij/checkins/{MCCAIN_ID}")
-    assert resp.status_code == 422
-
-
-def test_checkins_invalid_game_id_too_long():
-    resp = client.get(f"/games/00225000011/checkins/{MCCAIN_ID}")
     assert resp.status_code == 422

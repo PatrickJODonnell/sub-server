@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GAME_ID_PATTERN = re.compile(r"^\d{10}$")
+GAME_ID_PATTERN = re.compile(r"^\d+$")
 
 
 @app.get("/players", response_model=list[PlayerSummary])
@@ -44,11 +44,11 @@ def get_player(player_name: str):
 
 @app.get("/games/{game_id}/checkins/{player_id}", response_model=CheckInResponse)
 def get_checkins(
-    game_id: str = Path(..., description="10-digit NBA game ID"),
-    player_id: int = Path(..., description="NBA player ID"),
+    game_id: str = Path(..., description="ESPN NBA event ID"),
+    player_id: int = Path(..., description="ESPN athlete ID (matches PlayerDetail.player_id)"),
     last_event_num: int = 0,
 ):
     if not GAME_ID_PATTERN.match(game_id):
-        raise HTTPException(status_code=422, detail="game_id must be a 10-digit string")
+        raise HTTPException(status_code=422, detail="game_id must be a numeric string")
     data = nba_client.get_checkins(game_id, player_id, last_event_num)
     return CheckInResponse(**data)
