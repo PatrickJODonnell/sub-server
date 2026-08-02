@@ -37,10 +37,8 @@ def list_players():
 @app.get("/players/{player_name}", response_model=PlayerDetail)
 def get_player(player_name: str):
     data = nba_client.get_player_info(player_name)
-    season_stats = None
-    if data.get("season_stats"):
-        season_stats = SeasonStats(**data["season_stats"])
-    next_game = NextGame(**data["next_game"]) if data.get("next_game") else None
+    season_stats = SeasonStats(**data["season_stats"])
+    next_game = NextGame(**data["next_game"])
     return PlayerDetail(**{**data, "season_stats": season_stats, "next_game": next_game})
 
 

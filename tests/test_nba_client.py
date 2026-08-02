@@ -10,9 +10,8 @@ MCCAIN_ID = 1642272
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches_and_fast_retry(monkeypatch):
-    """Clear caches and skip retry sleeps for all tests."""
-    nba_client.clear_caches()
+def _fast_retry(monkeypatch):
+    """Skip retry sleeps for all tests."""
     monkeypatch.setattr("nba_client.time.sleep", lambda _: None)
 
 
@@ -170,7 +169,7 @@ def test_get_player_info_no_team_defaults_next_game(mock_get):
     athlete_no_team = {k: v for k, v in ATHLETE_PAYLOAD.items() if k != "team"}
     mock_get.side_effect = _fake_espn_get(athlete=athlete_no_team)
     result = nba_client.get_player_info("jared mccain")
-    assert result["next_game"] == {"game_id": None, "has_game_today": False, "start_time_utc": None}
+    assert result["next_game"] == {"game_id": "", "has_game_today": False, "start_time_utc": ""}
     assert result["full_name"] == "jared mccain"
 
 
@@ -179,7 +178,7 @@ def test_get_player_info_team_lookup_fails_falls_back(mock_get):
     """A transient failure resolving next_game shouldn't fail the whole player lookup."""
     mock_get.side_effect = _fake_espn_get(fail_on="site.api.espn.com")
     result = nba_client.get_player_info("jared mccain")
-    assert result["next_game"] == {"game_id": None, "has_game_today": False, "start_time_utc": None}
+    assert result["next_game"] == {"game_id": "", "has_game_today": False, "start_time_utc": ""}
     assert result["season_stats"] is not None
 
 
@@ -187,14 +186,14 @@ def test_get_player_info_team_lookup_fails_falls_back(mock_get):
 def test_get_player_info_no_next_event(mock_get):
     mock_get.side_effect = _fake_espn_get(team={"team": {"nextEvent": []}})
     result = nba_client.get_player_info("jared mccain")
-    assert result["next_game"] == {"game_id": None, "has_game_today": False, "start_time_utc": None}
+    assert result["next_game"] == {"game_id": "", "has_game_today": False, "start_time_utc": ""}
 
 
 @patch("nba_client.requests.get")
-def test_get_player_info_stats_unavailable_season_stats_none(mock_get):
+def test_get_player_info_stats_unavailable_season_stats_blank(mock_get):
     mock_get.side_effect = _fake_espn_get(stats_status=404)
     result = nba_client.get_player_info("jared mccain")
-    assert result["season_stats"] is None
+    assert result["season_stats"] == {"pts": None, "ast": None, "reb": None}
     assert result["next_game"]["game_id"] == "401898389"
 
 
@@ -334,21 +333,12 @@ def test_checkins_api_failure_503(mock_pbp_cls):
 
 
 @patch("nba_client.requests.get")
-def test_get_player_info_cache_hit(mock_get):
-    """Second call with same player_name uses cache, API called once per step."""
+def test_get_player_info_not_cached(mock_get):
+    """get_player_info is not cached — each call hits the network."""
     mock_get.side_effect = _fake_espn_get()
     nba_client.get_player_info("jared mccain")
     nba_client.get_player_info("jared mccain")
-    assert mock_get.call_count == 4  # search + athlete + stats + team, once total
-
-
-@patch("nba_client.requests.get")
-def test_get_player_info_cache_miss_different_name(mock_get):
-    """Different player_name triggers a new round of API calls."""
-    mock_get.side_effect = _fake_espn_get()
-    nba_client.get_player_info("jared mccain")
-    nba_client.get_player_info("nikola jokic")
-    assert mock_get.call_count == 8
+    assert mock_get.call_count == 8  # 4 calls per lookup, twice, no caching
 
 
 @patch("nba_client.LivePlayByPlay")
@@ -416,15 +406,19 @@ def test_get_checkins_retry_success(mock_pbp_cls):
 
 @patch("nba_client._reset_nba_stats_http_session")
 @patch("nba_client.requests.get")
-def test_get_player_info_resets_stats_session_after_success(mock_get, mock_reset):
+def test_get_player_info_success_does_not_call_stats_session_reset(mock_get, mock_reset):
+    """get_player_info is fully ESPN-based (plain requests) — it never touches
+    nba_api's shared HTTP session, so it has nothing to reset."""
     mock_get.side_effect = _fake_espn_get()
     nba_client.get_player_info("jared mccain")
-    assert mock_reset.call_count == 1
+    assert mock_reset.call_count == 0
 
 
 @patch("nba_client._reset_nba_stats_http_session")
 @patch("nba_client.requests.get")
 def test_get_player_info_retry_readtimeout_resets_before_backoff(mock_get, mock_reset):
+    """_retry_call's own reset-before-backoff still fires on ReadTimeout,
+    even though get_player_info no longer has its own session-reset wrapper."""
     fake_get = _fake_espn_get_with_retry(
         "apis/search/v2", fail_times=1, fail_exc=requests.exceptions.ReadTimeout("read timed out"),
     )
@@ -432,7 +426,7 @@ def test_get_player_info_retry_readtimeout_resets_before_backoff(mock_get, mock_
     result = nba_client.get_player_info("jared mccain")
     assert result["full_name"] == "jared mccain"
     assert fake_get.call_counts["target"] == 2
-    assert mock_reset.call_count == 2
+    assert mock_reset.call_count == 1
 
 
 @patch("nba_client._reset_nba_stats_http_session")

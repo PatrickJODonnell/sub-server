@@ -74,7 +74,7 @@ def test_get_player_with_stats(mock_info):
         "season_stats": {"pts": 15.3, "ast": 3.2, "reb": 2.8},
         "next_game": {"game_id": "401898389", "has_game_today": True, "start_time_utc": "2026-10-07T00:00:00Z"},
     }
-    resp = client.get("/players/jared-mccain", params={"player_name": "Jared McCain"})
+    resp = client.get("/players/Jared McCain")
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["player_id"], int)
@@ -116,35 +116,35 @@ def test_get_player_without_stats(mock_info):
         "draft_year": None,
         "draft_round": None,
         "draft_number": None,
-        "season_stats": None,
-        "next_game": {"game_id": None, "has_game_today": False, "start_time_utc": None},
+        "season_stats": {"pts": None, "ast": None, "reb": None},
+        "next_game": {"game_id": "", "has_game_today": False, "start_time_utc": ""},
     }
-    resp = client.get("/players/jared-mccain", params={"player_name": "Jared McCain"})
+    resp = client.get("/players/Jared McCain")
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["player_id"], int)
     assert isinstance(data["full_name"], str)
-    assert data["season_stats"] is None
+    assert data["season_stats"] == {"pts": None, "ast": None, "reb": None}
     for field in ["birthdate", "height", "weight", "position", "jersey",
                   "team_name", "season_experience", "roster_status",
                   "draft_year", "draft_round", "draft_number"]:
         assert data[field] is None
-    assert data["next_game"]["game_id"] is None
+    assert data["next_game"]["game_id"] == ""
     assert data["next_game"]["has_game_today"] is False
-    assert data["next_game"]["start_time_utc"] is None
+    assert data["next_game"]["start_time_utc"] == ""
 
 
 @patch("nba_client.get_player_info")
 def test_get_player_not_found(mock_info):
     mock_info.side_effect = HTTPException(status_code=404, detail="Player not found")
-    resp = client.get("/players/jared-mccain", params={"player_name": "Jared McCain"})
+    resp = client.get("/players/Jared McCain")
     assert resp.status_code == 404
 
 
 @patch("nba_client.get_player_info")
 def test_get_player_api_failure(mock_info):
     mock_info.side_effect = HTTPException(status_code=503, detail="NBA API request failed")
-    resp = client.get("/players/jared-mccain", params={"player_name": "Jared McCain"})
+    resp = client.get("/players/Jared McCain")
     assert resp.status_code == 503
 
 

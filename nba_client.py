@@ -61,6 +61,9 @@ def _retry_call(call_fn, max_attempts=3, backoff_base=1.0):
 
 
 
+_NO_NEXT_GAME = {"game_id": "", "has_game_today": False, "start_time_utc": ""}
+
+
 def _find_espn_stat(categories: list[dict], stat_name: str):
     """Look up a named stat (e.g. 'avgPoints') across ESPN statistics categories."""
     for category in categories:
@@ -132,9 +135,11 @@ def get_player_info(player_name: str) -> dict:
                 }
         except Exception:
             season_stats = None
+        if season_stats is None:
+            season_stats = {"pts": None, "ast": None, "reb": None}
 
         # Resolve the player's current team's next game via ESPN's site API.
-        next_game = {"game_id": None, "has_game_today": False, "start_time_utc": None}
+        next_game = dict(_NO_NEXT_GAME)
         try:
             team_ref = (athlete_detail.get("team") or {}).get("$ref", "")
             team_id_match = re.search(r"/teams/(\d+)", team_ref)
@@ -156,7 +161,7 @@ def get_player_info(player_name: str) -> dict:
                         "start_time_utc": event_dt_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     }
         except Exception:
-            next_game = {"game_id": None, "has_game_today": False, "start_time_utc": None}
+            next_game = dict(_NO_NEXT_GAME)
         return {
             "player_id": espn_id,
             "full_name": player_name,
