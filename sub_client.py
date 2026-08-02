@@ -186,7 +186,6 @@ def get_checkins(game_id: str, player_id: int, last_event_num: int = 0) -> dict:
             timeout=15,
         ))
         data = response.json()
-        print(data)
         if response.status_code != 200 or "plays" not in data:
             print("Game data not available (game may not have started)")
             return {"player_checked_in": False, "last_event_num": 0}
