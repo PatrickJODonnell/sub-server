@@ -34,18 +34,13 @@ def list_players():
 
 
 @app.get("/players/{player_id}", response_model=PlayerDetail)
-def get_player(player_id: int):
-    data = nba_client.get_player_info(player_id)
+def get_player(player_name: str):
+    data = nba_client.get_player_info(player_name)
     season_stats = None
     if data.get("season_stats"):
         season_stats = SeasonStats(**data["season_stats"])
-    return PlayerDetail(**{**data, "season_stats": season_stats})
-
-
-@app.get("/teams/{team_id}/next-game", response_model=NextGame)
-def get_next_game(team_id: int):
-    data = nba_client.get_next_game(team_id)
-    return NextGame(**data)
+    next_game = NextGame(**data["next_game"]) if data.get("next_game") else None
+    return PlayerDetail(**{**data, "season_stats": season_stats, "next_game": next_game})
 
 
 @app.get("/games/{game_id}/checkins/{player_id}", response_model=CheckInResponse)

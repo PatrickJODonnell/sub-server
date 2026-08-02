@@ -26,8 +26,7 @@ Interactive API docs are available at `http://localhost:8000/docs` once the serv
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/players` | List all active NBA players |
-| GET | `/players/{player_id}` | Get player details and current season stats |
-| GET | `/teams/{team_id}/next-game` | Check if a team plays today and get start time |
+| GET | `/players/{player_id}` | Get player details, current season stats, and the player's current team's next game |
 | GET | `/games/{game_id}/checkins/{player_id}` | Poll for player check-in events during a live game |
 
 ### Notable IDs
@@ -67,9 +66,9 @@ All `nba_api` calls use a **15-second** timeout, with up to **3 retries** and ex
 
 ### Stats API HTTP sessions
 
-Endpoints that use `nba_api.stats.endpoints` (`/players/{player_id}`, `/teams/{team_id}/next-game`) talk to **stats.nba.com** through `nba_api`'s shared `requests.Session`. In a long-lived process (typical for cloud hosting), reusing that session for consecutive stats calls can cause the next request to hang or time out — see [nba_api issue #633](https://github.com/swar/nba_api/issues/633).
+`/players/{player_id}` no longer talks to `stats.nba.com` — it's backed entirely by ESPN's public APIs (search, core athlete document, season statistics, and the player's team's next event), since `stats.nba.com` and `cdn.nba.com` are IP-blocked from the deployed cloud host. The stats-session-reset mitigation below is now only exercised by `/games/{game_id}/checkins/{player_id}`, which still uses `nba_api`'s live play-by-play module.
 
-`nba_client.py` mitigates this by **closing and dropping** that cached session in a `finally` block after each **stats** workflow finishes (player detail and league schedule). The shared retry helper also clears the session **before backoff** on `Timeout` or `ConnectionError`, including for live play-by-play, since `nba_api` reuses the same underlying session cache across HTTP clients.
+`nba_client.py` closes and drops `nba_api`'s cached HTTP session in a `finally` block after each request, and the shared retry helper also clears it **before backoff** on `Timeout` or `ConnectionError` — mitigating a known hang in long-lived processes reusing that session ([nba_api issue #633](https://github.com/swar/nba_api/issues/633)).
 
 ## Testing
 
@@ -81,8 +80,8 @@ uv run pytest tests/ -v
 
 Test files:
 
-- `tests/test_main.py` — Route-level tests via FastAPI `TestClient` (11 tests)
-- `tests/test_nba_client.py` — Business logic unit tests (19 tests)
+- `tests/test_main.py` — Route-level tests via FastAPI `TestClient` (14 tests)
+- `tests/test_nba_client.py` — Business logic unit tests (27 tests)
 
 ## Deployment
 

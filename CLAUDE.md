@@ -25,9 +25,10 @@ Interactive API docs: `http://localhost:8000/docs`
 | Method | Path | Returns |
 |--------|------|---------|
 | GET | `/players` | `list[PlayerSummary]` |
-| GET | `/players/{player_id}` | `PlayerDetail` |
-| GET | `/teams/{team_id}/next-game` | `NextGame` |
+| GET | `/players/{player_id}` | `PlayerDetail` (includes a nested `next_game: NextGame`) |
 | GET | `/games/{game_id}/checkins/{player_id}` | `CheckInResponse` |
+
+There is no standalone next-game endpoint — `get_player_info()` resolves the player's current ESPN team and pulls its next scheduled/live game (via `site.api.espn.com`'s `team.nextEvent`) as part of the same lookup, nested under `next_game` in `PlayerDetail`. Note: `next_game.game_id` is ESPN's own id, not an NBA game id — it is not yet usable with `/games/{game_id}/checkins/{player_id}`.
 
 ## Key Constants (hardcoded in `nba_client.py`)
 
@@ -37,8 +38,7 @@ Interactive API docs: `http://localhost:8000/docs`
 
 ## Caching & Retry
 
-- `get_player_info` — cached 5 min by player_id (TTLCache)
-- `get_next_game` — cached 2 min by team_id (TTLCache)
+- `get_player_info` — cached 5 min by player_name (TTLCache); this includes the nested `next_game` lookup
 - `get_checkins` — never cached (real-time data)
 - All nba_api calls retry up to 3 times with exponential backoff on transient errors
 - After each `stats` endpoint flow (and before retry on `Timeout` / `ConnectionError`), the shared `nba_api` `requests.Session` is closed and cleared — mitigates multi-request hangs to stats.nba.com in long-lived workers ([nba_api#633](https://github.com/swar/nba_api/issues/633))

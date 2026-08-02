@@ -1,8 +1,5 @@
-from datetime import date, datetime
 from unittest.mock import MagicMock, patch
-from zoneinfo import ZoneInfo
 
-import pandas as pd
 import pytest
 import requests
 from fastapi import HTTPException
@@ -10,7 +7,6 @@ from fastapi import HTTPException
 import nba_client
 
 MCCAIN_ID = 1642272
-OKC_TEAM_ID = 1610612760
 
 
 @pytest.fixture(autouse=True)
@@ -37,250 +33,176 @@ def test_get_active_players_returns_list(mock_get):
 # ── get_player_info ─────────────────────────────────────────────────
 
 
-def _mock_player_frames(include_stats=True, missing_name=False):
-    """Build the 3-frame list that CommonPlayerInfo returns."""
-    player_data = {
-        "PERSON_ID": [MCCAIN_ID],
-        "DISPLAY_FIRST_LAST": [None if missing_name else "Jared McCain"],
-        "BIRTHDATE": ["2004-08-27T00:00:00"],
-        "HEIGHT": ["6-3"],
-        "WEIGHT": [185.0],
-        "POSITION": ["Guard"],
-        "JERSEY": ["0"],
-        "TEAM_ID": [1610612755],
-        "TEAM_NAME": ["76ers"],
-        "TEAM_CITY": ["Philadelphia"],
-        "TEAM_ABBREVIATION": ["PHI"],
-        "SEASON_EXP": [1],
-        "ROSTERSTATUS": ["Active"],
-        "DRAFT_YEAR": ["2024"],
-        "DRAFT_ROUND": ["1"],
-        "DRAFT_NUMBER": ["16"],
-    }
-    df_player = pd.DataFrame(player_data)
-
-    if include_stats:
-        df_stats = pd.DataFrame({"PTS": [15.3], "AST": [3.2], "REB": [2.8]})
-    else:
-        df_stats = pd.DataFrame()
-
-    return [df_player, df_stats]
+def _resp(payload, status=200):
+    """Build a fake requests.Response with the given JSON payload and status."""
+    resp = MagicMock()
+    resp.status_code = status
+    resp.json.return_value = payload
+    return resp
 
 
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_success(mock_cls):
-    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames()
-    result = nba_client.get_player_info(MCCAIN_ID)
-    assert isinstance(result["player_id"], int)
-    assert isinstance(result["full_name"], str)
-    assert isinstance(result["birthdate"], str)
-    assert isinstance(result["height"], str)
-    assert isinstance(result["weight"], str)
-    assert isinstance(result["position"], str)
-    assert isinstance(result["jersey"], str)
-    assert isinstance(result["team_id"], int)
-    assert isinstance(result["team_name"], str)
-    assert isinstance(result["team_city"], str)
-    assert isinstance(result["team_abbreviation"], str)
-    assert isinstance(result["season_experience"], int)
-    assert isinstance(result["roster_status"], str)
-    assert isinstance(result["draft_year"], str)
-    assert isinstance(result["draft_round"], str)
-    assert isinstance(result["draft_number"], str)
-    assert isinstance(result["season_stats"], dict)
-    assert isinstance(result["season_stats"]["pts"], float)
-    assert isinstance(result["season_stats"]["ast"], float)
-    assert isinstance(result["season_stats"]["reb"], float)
+SEARCH_PAYLOAD = {
+    "results": [
+        {
+            "type": "player",
+            "contents": [
+                {"uid": "s:40~l:46~a:4683778", "subtitle": "Oklahoma City Thunder"},
+            ],
+        },
+    ],
+}
+
+ATHLETE_PAYLOAD = {
+    "dateOfBirth": "2004-02-20T08:00Z",
+    "displayHeight": "6' 3\"",
+    "weight": 195.0,
+    "position": {"name": "Guard"},
+    "jersey": "3",
+    "experience": {"years": 2},
+    "status": {"name": "Active"},
+    "draft": {"year": 2024, "round": 1, "selection": 16},
+    "team": {
+        "$ref": "http://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/teams/25?lang=en&region=us",
+    },
+}
+
+STATS_PAYLOAD = {
+    "splits": {
+        "categories": [
+            {"name": "offensive", "stats": [
+                {"name": "avgPoints", "value": 8.3},
+                {"name": "avgAssists", "value": 1.3},
+            ]},
+            {"name": "general", "stats": [
+                {"name": "avgRebounds", "value": 2.0},
+            ]},
+        ],
+    },
+}
+
+TEAM_PAYLOAD = {
+    "team": {
+        "nextEvent": [
+            {"id": "401898389", "date": "2026-10-07T00:00Z"},
+        ],
+    },
+}
 
 
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_no_stats(mock_cls):
-    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames(include_stats=False)
-    result = nba_client.get_player_info(MCCAIN_ID)
+def _fake_espn_get(search=None, athlete=None, stats=None, team=None, stats_status=200, fail_on=None):
+    """Build a requests.get replacement dispatching on URL substring.
+
+    `fail_on` (a URL substring) raises ConnectionError for that one step, letting
+    retry/failure tests target a single step in get_player_info's call chain.
+    """
+    search = SEARCH_PAYLOAD if search is None else search
+    athlete = ATHLETE_PAYLOAD if athlete is None else athlete
+    stats = STATS_PAYLOAD if stats is None else stats
+    team = TEAM_PAYLOAD if team is None else team
+
+    def _get(url, *args, **kwargs):
+        if fail_on and fail_on in url:
+            raise ConnectionError("timeout")
+        if "apis/search/v2" in url:
+            return _resp(search)
+        if "/statistics/0" in url:
+            return _resp(stats, status=stats_status)
+        if "site.api.espn.com" in url:
+            return _resp(team)
+        return _resp(athlete)
+
+    return _get
+
+
+def _fake_espn_get_with_retry(fail_url_substring, fail_times, fail_exc=None, **payloads):
+    """Like _fake_espn_get, but the step matching fail_url_substring fails
+    `fail_times` times (raising `fail_exc`, default ConnectionError) before succeeding."""
+    call_counts = {"target": 0}
+    base_get = _fake_espn_get(**payloads)
+    exc = fail_exc or ConnectionError("timeout")
+
+    def _get(url, *args, **kwargs):
+        if fail_url_substring in url:
+            call_counts["target"] += 1
+            if call_counts["target"] <= fail_times:
+                raise exc
+        return base_get(url, *args, **kwargs)
+
+    _get.call_counts = call_counts
+    return _get
+
+
+@patch("nba_client.requests.get")
+def test_get_player_info_success(mock_get):
+    mock_get.side_effect = _fake_espn_get()
+    result = nba_client.get_player_info("jared mccain")
+    assert result["player_id"] == "4683778"
+    assert result["full_name"] == "jared mccain"
+    assert result["birthdate"] == "2004-02-20"
+    assert result["height"] == "6' 3\""
+    assert result["weight"] == "195"
+    assert result["position"] == "Guard"
+    assert result["jersey"] == "3"
+    assert result["team_name"] == "Oklahoma City Thunder"
+    assert result["season_experience"] == 2
+    assert result["roster_status"] == "Active"
+    assert result["draft_year"] == "2024"
+    assert result["draft_round"] == "1"
+    assert result["draft_number"] == "16"
+    assert result["season_stats"] == {"pts": 8.3, "ast": 1.3, "reb": 2.0}
+    assert result["next_game"]["game_id"] == "401898389"
+    assert result["next_game"]["has_game_today"] is False
+    assert result["next_game"]["start_time_utc"] == "2026-10-07T00:00:00Z"
+
+
+@patch("nba_client.requests.get")
+def test_get_player_info_not_found(mock_get):
+    empty_search = {"results": [{"type": "player", "contents": []}]}
+    mock_get.side_effect = _fake_espn_get(search=empty_search)
+    with pytest.raises(HTTPException) as exc_info:
+        nba_client.get_player_info("nobody")
+    assert exc_info.value.status_code == 404
+
+
+@patch("nba_client.requests.get")
+def test_get_player_info_no_team_defaults_next_game(mock_get):
+    """Free agent / no current team — next_game falls back to the default shape."""
+    athlete_no_team = {k: v for k, v in ATHLETE_PAYLOAD.items() if k != "team"}
+    mock_get.side_effect = _fake_espn_get(athlete=athlete_no_team)
+    result = nba_client.get_player_info("jared mccain")
+    assert result["next_game"] == {"game_id": None, "has_game_today": False, "start_time_utc": None}
+    assert result["full_name"] == "jared mccain"
+
+
+@patch("nba_client.requests.get")
+def test_get_player_info_team_lookup_fails_falls_back(mock_get):
+    """A transient failure resolving next_game shouldn't fail the whole player lookup."""
+    mock_get.side_effect = _fake_espn_get(fail_on="site.api.espn.com")
+    result = nba_client.get_player_info("jared mccain")
+    assert result["next_game"] == {"game_id": None, "has_game_today": False, "start_time_utc": None}
+    assert result["season_stats"] is not None
+
+
+@patch("nba_client.requests.get")
+def test_get_player_info_no_next_event(mock_get):
+    mock_get.side_effect = _fake_espn_get(team={"team": {"nextEvent": []}})
+    result = nba_client.get_player_info("jared mccain")
+    assert result["next_game"] == {"game_id": None, "has_game_today": False, "start_time_utc": None}
+
+
+@patch("nba_client.requests.get")
+def test_get_player_info_stats_unavailable_season_stats_none(mock_get):
+    mock_get.side_effect = _fake_espn_get(stats_status=404)
+    result = nba_client.get_player_info("jared mccain")
     assert result["season_stats"] is None
+    assert result["next_game"]["game_id"] == "401898389"
 
 
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_missing_name_fallback(mock_cls):
-    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames(missing_name=True)
-    result = nba_client.get_player_info(MCCAIN_ID)
-    assert result["full_name"] == "Unknown"
-
-
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_empty_df_404(mock_cls):
-    mock_cls.return_value.get_data_frames.return_value = [pd.DataFrame(), pd.DataFrame()]
+@patch("nba_client.requests.get")
+def test_get_player_info_api_failure_503(mock_get):
+    mock_get.side_effect = ConnectionError("timeout")
     with pytest.raises(HTTPException) as exc_info:
-        nba_client.get_player_info(MCCAIN_ID)
-    assert exc_info.value.status_code == 404
-
-
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_api_failure_503(mock_cls):
-    mock_cls.side_effect = ConnectionError("timeout")
-    with pytest.raises(HTTPException) as exc_info:
-        nba_client.get_player_info(MCCAIN_ID)
-    assert exc_info.value.status_code == 503
-
-
-# ── get_next_game ───────────────────────────────────────────────────
-
-
-def _make_schedule_df(rows):
-    """Build a schedule DataFrame from a list of row dicts."""
-    return pd.DataFrame(rows)
-
-
-@patch("nba_client.datetime")
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_has_game_today(mock_sched_cls, mock_dt):
-    today = date(2026, 3, 28)
-    mock_now = MagicMock()
-    mock_now.date.return_value = today
-    mock_dt.now.return_value = mock_now
-    mock_dt.strptime.side_effect = datetime.strptime
-
-    df = _make_schedule_df([{
-        "gameId": "0022500001",
-        "homeTeam_teamId": OKC_TEAM_ID,
-        "awayTeam_teamId": 1610612755,
-        "gameDateEst": "2026-03-28",
-        "gameStatusText": "7:00 pm ET",
-    }])
-    mock_sched_cls.return_value.get_data_frames.return_value = [df]
-
-    result = nba_client.get_next_game(OKC_TEAM_ID)
-    assert result["has_game_today"] is True
-    assert isinstance(result["game_id"], str)
-    assert isinstance(result["start_time_utc"], str)
-    assert result["start_time_utc"].endswith("Z")
-
-
-@patch("nba_client.datetime")
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_no_game_today(mock_sched_cls, mock_dt):
-    today = date(2026, 3, 28)
-    mock_now = MagicMock()
-    mock_now.date.return_value = today
-    mock_dt.now.return_value = mock_now
-    mock_dt.strptime.side_effect = datetime.strptime
-
-    df = _make_schedule_df([{
-        "gameId": "0022500002",
-        "homeTeam_teamId": OKC_TEAM_ID,
-        "awayTeam_teamId": 1610612755,
-        "gameDateEst": "2026-03-30",
-        "gameStatusText": "8:00 pm ET",
-    }])
-    mock_sched_cls.return_value.get_data_frames.return_value = [df]
-
-    result = nba_client.get_next_game(OKC_TEAM_ID)
-    assert result["has_game_today"] is False
-    assert isinstance(result["game_id"], str)
-    assert result["start_time_utc"] is None
-
-
-@patch("nba_client.datetime")
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_live_game_prioritized(mock_sched_cls, mock_dt):
-    today = date(2026, 3, 28)
-    mock_now = MagicMock()
-    mock_now.date.return_value = today
-    mock_dt.now.return_value = mock_now
-    mock_dt.strptime.side_effect = datetime.strptime
-
-    df = _make_schedule_df([
-        {
-            "gameId": "0022500003",
-            "homeTeam_teamId": OKC_TEAM_ID,
-            "awayTeam_teamId": 1610612755,
-            "gameDateEst": "2026-03-28",
-            "gameStatusText": "7:00 pm ET",
-        },
-        {
-            "gameId": "0022500004",
-            "homeTeam_teamId": OKC_TEAM_ID,
-            "awayTeam_teamId": 1610612744,
-            "gameDateEst": "2026-03-28",
-            "gameStatusText": "3rd Qtr",
-        },
-    ])
-    mock_sched_cls.return_value.get_data_frames.return_value = [df]
-
-    result = nba_client.get_next_game(OKC_TEAM_ID)
-    assert result["has_game_today"] is True
-    assert result["game_id"] == "0022500004"
-    assert result["start_time_utc"] is None
-
-
-@patch("nba_client.datetime")
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_all_past_games_404(mock_sched_cls, mock_dt):
-    today = date(2026, 3, 28)
-    mock_now = MagicMock()
-    mock_now.date.return_value = today
-    mock_dt.now.return_value = mock_now
-    mock_dt.strptime.side_effect = datetime.strptime
-
-    df = _make_schedule_df([{
-        "gameId": "0022500005",
-        "homeTeam_teamId": OKC_TEAM_ID,
-        "awayTeam_teamId": 1610612755,
-        "gameDateEst": "2026-03-27",
-        "gameStatusText": "Final",
-    }])
-    mock_sched_cls.return_value.get_data_frames.return_value = [df]
-
-    with pytest.raises(HTTPException) as exc_info:
-        nba_client.get_next_game(OKC_TEAM_ID)
-    assert exc_info.value.status_code == 404
-
-
-@patch("nba_client.datetime")
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_away_team(mock_sched_cls, mock_dt):
-    today = date(2026, 3, 28)
-    mock_now = MagicMock()
-    mock_now.date.return_value = today
-    mock_dt.now.return_value = mock_now
-    mock_dt.strptime.side_effect = datetime.strptime
-
-    df = _make_schedule_df([{
-        "gameId": "0022500006",
-        "homeTeam_teamId": 1610612755,
-        "awayTeam_teamId": OKC_TEAM_ID,
-        "gameDateEst": "2026-03-28",
-        "gameStatusText": "7:00 pm ET",
-    }])
-    mock_sched_cls.return_value.get_data_frames.return_value = [df]
-
-    result = nba_client.get_next_game(OKC_TEAM_ID)
-    assert result["has_game_today"] is True
-    assert isinstance(result["game_id"], str)
-    assert isinstance(result["start_time_utc"], str)
-
-
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_no_games_404(mock_sched_cls):
-    df = _make_schedule_df([{
-        "gameId": "0022500007",
-        "homeTeam_teamId": 9999,
-        "awayTeam_teamId": 8888,
-        "gameDateEst": "2026-03-28",
-        "gameStatusText": "7:00 pm ET",
-    }])
-    mock_sched_cls.return_value.get_data_frames.return_value = [df]
-
-    with pytest.raises(HTTPException) as exc_info:
-        nba_client.get_next_game(OKC_TEAM_ID)
-    assert exc_info.value.status_code == 404
-
-
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_api_failure_503(mock_sched_cls):
-    mock_sched_cls.side_effect = ConnectionError("timeout")
-    with pytest.raises(HTTPException) as exc_info:
-        nba_client.get_next_game(OKC_TEAM_ID)
+        nba_client.get_player_info("jared mccain")
     assert exc_info.value.status_code == 503
 
 
@@ -411,42 +333,22 @@ def test_checkins_api_failure_503(mock_pbp_cls):
 # ── Caching tests ──────────────────────────────────────────────────
 
 
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_cache_hit(mock_cls):
-    """Second call with same player_id uses cache, API called once."""
-    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames()
-    nba_client.get_player_info(MCCAIN_ID)
-    nba_client.get_player_info(MCCAIN_ID)
-    assert mock_cls.call_count == 1
+@patch("nba_client.requests.get")
+def test_get_player_info_cache_hit(mock_get):
+    """Second call with same player_name uses cache, API called once per step."""
+    mock_get.side_effect = _fake_espn_get()
+    nba_client.get_player_info("jared mccain")
+    nba_client.get_player_info("jared mccain")
+    assert mock_get.call_count == 4  # search + athlete + stats + team, once total
 
 
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_cache_miss_different_id(mock_cls):
-    """Different player_id triggers a new API call."""
-    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames()
-    nba_client.get_player_info(MCCAIN_ID)
-    nba_client.get_player_info(203999)
-    assert mock_cls.call_count == 2
-
-
-@patch("nba_client.datetime")
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_cache_hit(mock_sched_cls, mock_dt):
-    """Second call with same team_id uses cache."""
-    today = date(2026, 3, 28)
-    mock_now = MagicMock()
-    mock_now.date.return_value = today
-    mock_dt.now.return_value = mock_now
-    mock_dt.strptime.side_effect = datetime.strptime
-    df = _make_schedule_df([{
-        "gameId": "0022500001", "homeTeam_teamId": OKC_TEAM_ID,
-        "awayTeam_teamId": 1610612755, "gameDateEst": "2026-03-28",
-        "gameStatusText": "7:00 pm ET",
-    }])
-    mock_sched_cls.return_value.get_data_frames.return_value = [df]
-    nba_client.get_next_game(OKC_TEAM_ID)
-    nba_client.get_next_game(OKC_TEAM_ID)
-    assert mock_sched_cls.call_count == 1
+@patch("nba_client.requests.get")
+def test_get_player_info_cache_miss_different_name(mock_get):
+    """Different player_name triggers a new round of API calls."""
+    mock_get.side_effect = _fake_espn_get()
+    nba_client.get_player_info("jared mccain")
+    nba_client.get_player_info("nikola jokic")
+    assert mock_get.call_count == 8
 
 
 @patch("nba_client.LivePlayByPlay")
@@ -463,59 +365,36 @@ def test_checkins_not_cached(mock_pbp_cls):
 # ── Retry tests ────────────────────────────────────────────────────
 
 
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_retry_success(mock_cls):
-    """First attempt fails, second succeeds."""
-    mock_cls.side_effect = [
-        ConnectionError("timeout"),
-        MagicMock(get_data_frames=MagicMock(return_value=_mock_player_frames())),
-    ]
-    result = nba_client.get_player_info(MCCAIN_ID)
-    assert result["full_name"] == "Jared McCain"
-    assert mock_cls.call_count == 2
+@patch("nba_client.requests.get")
+def test_get_player_info_retry_success(mock_get):
+    """First attempt at the search step fails, second succeeds."""
+    fake_get = _fake_espn_get_with_retry("apis/search/v2", fail_times=1)
+    mock_get.side_effect = fake_get
+    result = nba_client.get_player_info("jared mccain")
+    assert result["full_name"] == "jared mccain"
+    assert fake_get.call_counts["target"] == 2
 
 
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_retry_exhaustion(mock_cls):
-    """All 3 attempts fail — raises 503."""
-    mock_cls.side_effect = ConnectionError("timeout")
+@patch("nba_client.requests.get")
+def test_get_player_info_retry_exhaustion(mock_get):
+    """All 3 attempts at the search step fail — raises 503."""
+    fake_get = _fake_espn_get_with_retry("apis/search/v2", fail_times=3)
+    mock_get.side_effect = fake_get
     with pytest.raises(HTTPException) as exc_info:
-        nba_client.get_player_info(MCCAIN_ID)
+        nba_client.get_player_info("jared mccain")
     assert exc_info.value.status_code == 503
-    assert mock_cls.call_count == 3
+    assert fake_get.call_counts["target"] == 3
 
 
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_no_retry_on_http_exception(mock_cls):
+@patch("nba_client.requests.get")
+def test_get_player_info_no_retry_on_http_exception(mock_get):
     """HTTPException (e.g. 404) is not retried."""
-    mock_cls.return_value.get_data_frames.return_value = [pd.DataFrame(), pd.DataFrame()]
+    empty_search = {"results": [{"type": "player", "contents": []}]}
+    mock_get.side_effect = _fake_espn_get(search=empty_search)
     with pytest.raises(HTTPException) as exc_info:
-        nba_client.get_player_info(MCCAIN_ID)
+        nba_client.get_player_info("nobody")
     assert exc_info.value.status_code == 404
-    assert mock_cls.call_count == 1
-
-
-@patch("nba_client.datetime")
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_retry_success(mock_sched_cls, mock_dt):
-    """First attempt fails, second succeeds for next-game."""
-    today = date(2026, 3, 28)
-    mock_now = MagicMock()
-    mock_now.date.return_value = today
-    mock_dt.now.return_value = mock_now
-    mock_dt.strptime.side_effect = datetime.strptime
-    df = _make_schedule_df([{
-        "gameId": "0022500001", "homeTeam_teamId": OKC_TEAM_ID,
-        "awayTeam_teamId": 1610612755, "gameDateEst": "2026-03-28",
-        "gameStatusText": "7:00 pm ET",
-    }])
-    mock_sched_cls.side_effect = [
-        ConnectionError("timeout"),
-        MagicMock(get_data_frames=MagicMock(return_value=[df])),
-    ]
-    result = nba_client.get_next_game(OKC_TEAM_ID)
-    assert result["has_game_today"] is True
-    assert mock_sched_cls.call_count == 2
+    assert mock_get.call_count == 1
 
 
 @patch("nba_client.LivePlayByPlay")
@@ -536,44 +415,23 @@ def test_get_checkins_retry_success(mock_pbp_cls):
 
 
 @patch("nba_client._reset_nba_stats_http_session")
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_resets_stats_session_after_success(mock_cls, mock_reset):
-    mock_cls.return_value.get_data_frames.return_value = _mock_player_frames()
-    nba_client.get_player_info(MCCAIN_ID)
+@patch("nba_client.requests.get")
+def test_get_player_info_resets_stats_session_after_success(mock_get, mock_reset):
+    mock_get.side_effect = _fake_espn_get()
+    nba_client.get_player_info("jared mccain")
     assert mock_reset.call_count == 1
 
 
 @patch("nba_client._reset_nba_stats_http_session")
-@patch("nba_client.datetime")
-@patch("nba_client.scheduleleaguev2.ScheduleLeagueV2")
-def test_get_next_game_resets_stats_session_after_success(mock_sched_cls, mock_dt, mock_reset):
-    today = date(2026, 3, 28)
-    mock_now = MagicMock()
-    mock_now.date.return_value = today
-    mock_dt.now.return_value = mock_now
-    mock_dt.strptime.side_effect = datetime.strptime
-    df = _make_schedule_df([{
-        "gameId": "0022500001",
-        "homeTeam_teamId": OKC_TEAM_ID,
-        "awayTeam_teamId": 1610612755,
-        "gameDateEst": "2026-03-28",
-        "gameStatusText": "7:00 pm ET",
-    }])
-    mock_sched_cls.return_value.get_data_frames.return_value = [df]
-    nba_client.get_next_game(OKC_TEAM_ID)
-    assert mock_reset.call_count == 1
-
-
-@patch("nba_client._reset_nba_stats_http_session")
-@patch("nba_client.commonplayerinfo.CommonPlayerInfo")
-def test_get_player_info_retry_readtimeout_resets_before_backoff(mock_cls, mock_reset):
-    mock_cls.side_effect = [
-        requests.exceptions.ReadTimeout("read timed out"),
-        MagicMock(get_data_frames=MagicMock(return_value=_mock_player_frames())),
-    ]
-    result = nba_client.get_player_info(MCCAIN_ID)
-    assert result["full_name"] == "Jared McCain"
-    assert mock_cls.call_count == 2
+@patch("nba_client.requests.get")
+def test_get_player_info_retry_readtimeout_resets_before_backoff(mock_get, mock_reset):
+    fake_get = _fake_espn_get_with_retry(
+        "apis/search/v2", fail_times=1, fail_exc=requests.exceptions.ReadTimeout("read timed out"),
+    )
+    mock_get.side_effect = fake_get
+    result = nba_client.get_player_info("jared mccain")
+    assert result["full_name"] == "jared mccain"
+    assert fake_get.call_counts["target"] == 2
     assert mock_reset.call_count == 2
 
 

@@ -16,6 +16,12 @@ class SeasonStats(BaseModel):
     reb: Optional[float]
 
 
+class NextGame(BaseModel):
+    game_id: Optional[str] = None
+    has_game_today: bool
+    start_time_utc: Optional[str] = None
+
+
 class PlayerDetail(BaseModel):
     player_id: int
     full_name: str
@@ -24,22 +30,14 @@ class PlayerDetail(BaseModel):
     weight: Optional[str]
     position: Optional[str]
     jersey: Optional[str]
-    team_id: Optional[int]
     team_name: Optional[str]
-    team_city: Optional[str]
-    team_abbreviation: Optional[str]
     season_experience: Optional[int]
     roster_status: Optional[str]
     draft_year: Optional[str]
     draft_round: Optional[str]
     draft_number: Optional[str]
     season_stats: Optional[SeasonStats]
-
-
-class NextGame(BaseModel):
-    game_id: Optional[str] = None
-    has_game_today: bool
-    start_time_utc: Optional[str] = None
+    next_game: Optional[NextGame] = None
 
 
 class CheckInResponse(BaseModel):
