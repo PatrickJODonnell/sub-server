@@ -8,6 +8,7 @@ from models import CheckInResponse, NextGame, PlayerDetail, PlayerSummary, Seaso
 
 app = FastAPI(title="NBA Check-In Tracker")
 
+# TODO -> Tighten this up later on
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
